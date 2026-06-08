@@ -1,0 +1,155 @@
+---
+- name: "Deploy | create {{ hcp }} deployment directory for {{ cluster.name }}"
+  ansible.builtin.file:
+    state: directory
+    path: "{{ deployment_dir }}/{{ cluster.name }}/auth"
+    mode: "0755"
+
+- name: "Deploy | check if hostedcluster/{{ cluster.name }} already exists"
+  kubernetes.core.k8s_info:
+    api_version: hypershift.openshift.io/v1beta1
+    kind: HostedCluster
+    namespace: clusters
+    name: "{{ cluster.name }}"
+  register: hc
+  changed_when: hc.resources is defined and hc.resources | length > 0
+  failed_when: false
+
+- name: "Deploy | set hostedcluster version for {{ cluster.name }}"
+  ansible.builtin.set_fact:
+    cluster_version: "{{ default_version if cluster.image == 'default' else cluster.image }}"
+  when:
+    - cluster.image == "default" or cluster.image is defined
+    - cluster.image != "default" or (default_version is defined)
+
+- name: "Deploy | Gather information about all availability zones for {{ cluster.name }}"
+  amazon.aws.aws_az_info:
+    region: "{{ cluster.region }}"
+  register: az_info
+  when: cluster.spread_across_availability_zones | default(false)
+
+- name: "Deploy | Set fact with availability zone names for {{ cluster.name }}"
+  ansible.builtin.set_fact:
+    zones: "{{ az_info.availability_zones | map(attribute='zone_name') | list | join(',') }}"
+  when: cluster.spread_across_availability_zones | default(false)
+
+- name: "Deploy | create cluster {{ cluster.name }}"
+  ansible.builtin.shell: >
+    hcp create cluster aws
+    --name {{ cluster.name }}
+    --node-pool-replicas {{ cluster.replicas }}
+    --instance-type {{ cluster.instance_type }}
+    --infra-id {{ cluster.name }}
+    --base-domain {{ domain }}
+    --pull-secret {{ pull_secret_path }}
+    --region {{ cluster.region }}
+    {% if cluster.cluster_cidr is defined %}
+    --cluster-cidr "{{ cluster.cluster_cidr }}"
+    {% endif %}
+    {% if cluster.machine_cidr is defined %}
+    --machine-cidr "{{ cluster.machine_cidr }}"
+    {% endif %}
+    {% if cluster.service_cidr is defined %}
+    --service-cidr "{{ cluster.service_cidr }}"
+    {% endif %}
+    {% if cluster.vpc_cidr is defined %}
+    --vpc-cidr "{{ cluster.vpc_cidr }}"
+    {% endif %}
+    {% if cluster.spread_across_availability_zones | default(false) %}
+    --zones {{ zones }}
+    {% endif %}
+    {% if cluster.image == "default" %}
+    --release-image quay.io/openshift-release-dev/ocp-release:{{ default_version }}-x86_64
+    {% else %}
+    --release-image quay.io/openshift-release-dev/ocp-release:{{ cluster.image }}-x86_64
+    {% endif %}
+    --sts-creds {{ sts_creds.dir }}/{{ sts_creds.file }}
+    --role-arn {{ hcp_role_arn }}
+  args:
+    executable: "{{ lookup('ansible.builtin.env', 'SHELL') }}"
+  async: 3600
+  poll: 0
+  register: cluster_create_async
+  changed_when: true
+  when:
+    - create
+    - not (hc.resources is defined and hc.resources | length > 0)
+    - not destroy
+    - cluster.image != "default" or (default_version is defined)
+
+- name: "Deploy | Cluster Create Info for {{ cluster.name }}"
+  ansible.builtin.debug:
+    msg: |
+     "A cluster with the following information is being created:
+      name: {{ cluster.name }}
+      replicas: {{ cluster.replicas }}
+      instance-type: {{ cluster.instance_type }}
+      base-domain: {{ domain }}
+      region: {{ cluster.region }}
+      {% if cluster.spread_across_availability_zones | default(false) %}
+      zones: {{ zones }}
+      {% endif %}
+      {% if cluster.image != "default" %}
+      ocp_version: {{ cluster.image }}"
+      {% else %}
+      ocp_version: {{ default_version }}"
+      {% endif %}
+      {% if cluster.cluster_cidr is defined %}
+      cluster-cidr: {{ cluster.cluster_cidr }}
+      {% endif %}
+      {% if cluster.machine_cidr is defined %}
+      machine-cidr: "{{ cluster.machine_cidr }}"
+      {% endif %}
+      {% if cluster.service_cidr is defined %}
+      service-cidr: "{{ cluster.service_cidr }}"
+      {% endif %}
+      {% if cluster.vpc_cidr is defined %}
+      vpc_cidr: "{{ cluster.vpc_cidr }}"
+      {% endif %}
+  when: cluster.image != "default" or (default_version is defined)
+
+- name: "Deploy | warn if skipping cluster with default image (kubeconfig not available)"
+  ansible.builtin.debug:
+    msg: "Skipping cluster {{ cluster.name }} - image: default requires kubeconfig to determine version"
+  when:
+    - create
+    - cluster.image == "default"
+    - default_version is not defined
+
+- name: "Deploy | wait for cluster {{ cluster.name }} creation to complete"
+  ansible.builtin.async_status:
+    jid: "{{ cluster_create_async.ansible_job_id }}"
+  register: cluster_create_result
+  until: cluster_create_result.finished
+  retries: 360
+  delay: 10
+  when:
+    - cluster_create_async is defined
+    - cluster_create_async.ansible_job_id is defined
+
+- name: "Deploy | wait for hostedcluster and nodepool to be ready for {{ cluster.name }} | this can take a while"
+  kubernetes.core.k8s_info:
+    name: "{{ cluster.name }}"
+    api_version: hypershift.openshift.io/v1beta1
+    kind: hostedcluster
+    namespace: clusters
+  register: hc_status
+  until:
+    - hc_status.resources is defined and hc_status.resources | length > 0
+    - hc_status.resources[0].status is defined
+    - hc_status.resources[0].status.version is defined
+    - hc_status.resources[0].status.version.history is defined
+    - "'Completed' in (hc_status.resources[0] | community.general.json_query('status.version.history[*].state'))"
+  retries: "{{ (wait_timeout_seconds / check_interval_seconds) | int }}"
+  delay: "{{ check_interval_seconds }}"
+  failed_when: false
+  when:
+    - cluster_create_async is defined
+    - cluster_create_async.ansible_job_id is defined
+    - cluster_create_result is defined
+    - cluster_create_result.finished | default(false)
+
+- name: "Import create-kubeconfig task"
+  ansible.builtin.import_tasks: "hcp-create-kubeconfig.yml"
+  when:
+    - cluster_create_async is defined

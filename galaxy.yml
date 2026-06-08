@@ -1,0 +1,39 @@
+---
+namespace: rhvp
+name: hypershift_automation
+version: 1.0.0
+readme: README.md
+authors:
+  - Red Hat Validated Patterns Team
+description: >-
+  Ansible collection for automating HyperShift (Hosted Control Planes)
+  cluster lifecycle on AWS, including IAM provisioning, cluster creation,
+  destruction, and nodepool management.
+license:
+  - Apache-2.0
+repository: https://github.com/validatedpatterns/hypershift-automation
+documentation: https://github.com/validatedpatterns/hypershift-automation/blob/main/README.md
+issues: https://github.com/validatedpatterns/hypershift-automation/issues
+tags:
+  - cloud
+  - infrastructure
+  - openshift
+  - hypershift
+  - aws
+dependencies:
+  kubernetes.core: ">=2.0.0"
+  amazon.aws: ">=6.0.0"
+  community.aws: ">=6.0.0"
+  community.general: ">=7.0.0"
+build_ignore:
+  - .git
+  - .gitignore
+  - .ansible
+  - .ansible-lint
+  - .yamllint
+  - Makefile
+  - ansible.cfg
+  - site.yml
+  - vars.yml
+  - "*.swp"
+  - "*sts-creds.json"

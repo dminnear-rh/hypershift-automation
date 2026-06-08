@@ -1,0 +1,10 @@
+---
+- name: "Destroy | Get the role ARN information"
+  ansible.builtin.import_tasks: role-facts.yml
+
+- name: "Destroy | remove cluster resources (parallel)"
+  ansible.builtin.include_tasks: hcp-destroy-cluster-expanded.yml
+  loop: "{{ clusters }}"
+  loop_control:
+    loop_var: cluster_item
+  when: destroy

@@ -1,0 +1,4 @@
+---
+# Role variables
+# Action flags and cluster properties are provided via extra vars (-e '@vars.yml')
+# See defaults/main.yml for default values

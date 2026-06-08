@@ -1,0 +1,32 @@
+---
+galaxy_info:
+  role_name: cluster
+  author: Red Hat Validated Patterns Team
+  description: >-
+    Manage HyperShift (Hosted Control Planes) cluster lifecycle on AWS,
+    including IAM roles/policies, cluster creation/destruction, and
+    nodepool management.
+  license: Apache-2.0
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Fedora
+      versions:
+        - all
+    - name: EL
+      versions:
+        - "8"
+        - "9"
+  galaxy_tags:
+    - openshift
+    - hypershift
+    - aws
+    - kubernetes
+    - cloud
+
+dependencies: []
+
+collections:
+  - kubernetes.core
+  - amazon.aws
+  - community.aws
+  - community.general

@@ -1,0 +1,47 @@
+---
+- name: "Preflight | Get the {{ iam.hcp_role_name }} ARN"
+  ansible.builtin.import_tasks: role-facts.yml
+
+- name: "Preflight | check if kubeconfig is needed"
+  ansible.builtin.set_fact:
+    need_kubeconfig: "{{ clusters | selectattr('image', 'equalto', 'default') | list | length > 0 }}"
+  when: create
+
+- name: "Deploy | get clusterversion from hosting cluster"
+  kubernetes.core.k8s_info:
+    api_version: config.openshift.io/v1
+    kind: ClusterVersion
+  register: clusterversion
+  failed_when: false
+  changed_when: false
+  when:
+    - create
+    - need_kubeconfig | default(false)
+
+- name: "Deploy | warn if kubeconfig not available and default image is used"
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: Kubeconfig not available. Clusters with image: default will be skipped.
+      Please configure kubeconfig or use a specific image version.
+  when:
+    - create
+    - need_kubeconfig | default(false)
+    - clusterversion.resources is not defined or clusterversion.resources | length == 0
+
+- name: "Deploy | set default version fact"
+  ansible.builtin.set_fact:
+    default_version: "{{ clusterversion.resources[0].status.desired.version }}"
+  when:
+    - create
+    - clusterversion.resources is defined
+    - clusterversion.resources | length > 0
+    - clusterversion.resources[0].status is defined
+    - clusterversion.resources[0].status.desired is defined
+    - clusterversion.resources[0].status.desired.version is defined
+
+- name: "Deploy | create clusters (parallel)"
+  ansible.builtin.include_tasks: hcp-create-cluster-expanded.yml
+  loop: "{{ clusters }}"
+  loop_control:
+    loop_var: cluster_item
+  when: create and not destroy

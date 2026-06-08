@@ -1,0 +1,63 @@
+---
+- name: "Validate | check for oc binary"
+  ansible.builtin.command:
+    cmd: which oc
+  register: oc
+  changed_when: false
+  failed_when: oc.rc != 0
+
+- name: "Validate | check for hcp binary"
+  ansible.builtin.command:
+    cmd: which hcp
+  register: hcp
+  changed_when: false
+  failed_when: hcp.rc != 0
+
+- name: "Validate | check for existence of {{ pull_secret_path }}"
+  ansible.builtin.stat:
+    path: "{{ pull_secret_path }}"
+  register: pullsecret
+
+- name: "Validate | fail if {{ pull_secret_path }} is not found"
+  ansible.builtin.fail:
+    msg: "{{ pull_secret_path }} must exist"
+  when: pullsecret.stat.exists is not defined
+
+- name: "Preflight | create directory for {{ sts_creds.dir }}"
+  ansible.builtin.file:
+    state: directory
+    path: "{{ sts_creds.dir }}"
+    owner: "{{ lookup('ansible.builtin.env', 'USER') }}"
+    mode: "0750"
+
+- name: "Preflight | Generate sts token"
+  community.aws.sts_session_token:
+  register: sts
+
+- name: "Preflight | Create session token config {{ sts_creds.dir }}/{{ sts_creds.file }}"
+  ansible.builtin.copy:
+    content: "{{ lookup('ansible.builtin.template', './templates/sts-creds.json.j2') }}"
+    dest: "{{ sts_creds.dir }}/{{ sts_creds.file }}"
+    owner: "{{ lookup('ansible.builtin.env', 'USER') }}"
+    mode: "0600"
+
+- name: Provision IAM Roles and Policies for HyperShift
+  ansible.builtin.include_tasks: iam.yml
+  when: create_iam
+  tags: iam
+
+- name: Create Hosted Control Plane Resources
+  ansible.builtin.include_tasks: hcp-create.yml
+  when: create
+
+- name: Get kubeconfig, passwords, etc.
+  ansible.builtin.include_tasks: hcp-post-install.yml
+  when: post_install
+
+- name: Destroy Hosted Control Plane Resources
+  ansible.builtin.include_tasks: hcp-destroy.yml
+  when: destroy
+
+- name: Add Nodes to Hosted Cluster
+  ansible.builtin.include_tasks: add-nodepool.yml
+  when: add_nodepool

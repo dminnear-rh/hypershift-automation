@@ -1,0 +1,24 @@
+---
+- name: "Preflight | Get the {{ iam.hcp_role_name }} ARN"
+  ansible.builtin.import_tasks: role-facts.yml
+
+- name: "Preflight | check if kubeconfig is needed"
+  ansible.builtin.set_fact:
+    need_kubeconfig: "{{ clusters | selectattr('image', 'equalto', 'default') | list | length > 0 }}"
+  when: post_install
+
+- name: "Deploy | warn if kubeconfig not available and default image is used"
+  ansible.builtin.debug:
+    msg: >-
+      WARNING: Kubeconfig not available. Clusters with image: default will be skipped.
+      Please configure kubeconfig or use a specific image version.
+  when:
+    - post_install
+    - need_kubeconfig | default(false)
+
+- name: "Post-install | create kubeconfig and credentials for clusters"
+  ansible.builtin.include_tasks: "hcp-create-kubeconfig.yml"
+  loop: "{{ clusters }}"
+  loop_control:
+    loop_var: cluster
+  when: post_install
